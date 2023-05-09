@@ -1,4 +1,36 @@
 <blockquote>
+<h3>0. TODO</h3>
+</blockquote>
+
+- 전처리 <a href="">@도영</a>
+
+  - parameter "YY-MM-DD" 넣으면 하루 잘라줘
+  - 행정동 id 화
+  - Travel Time 계산해서 열로 만들어주기
+  - 시각 : 07:00으로부터의 분 단위 시간
+  - 이상치 제거 (대기시간 < 0)
+  - 차량의 work start work end
+    - column : work start / work end
+
+- 동동거리 <a href="">@민동</a>
+
+  - 동to동 426*426*96 matrix 만들기
+  - kakaomap api (주민 센터 기준)
+
+- Model BaseLine
+
+  - 선형으로 Baseline
+
+- main.py 만들기
+
+  - argparser + shell로 실험
+
+- 날짜 선정
+
+- **REMIND**
+  - early bird variable
+
+<blockquote>
 <h3 id="1-commit-메시지-구조">1. Commit 메시지 구조</h3>
 </blockquote>
 <p>기본 적인 커밋 메시지 구조는 <strong><code>제목</code>,<code>본문</code>,<code>꼬리말</code></strong> 세가지 파트로 나누고, 각 파트는 빈줄을 두어 구분한다.</p>
@@ -65,9 +97,8 @@ footer
 
 SMS, 이메일 중복확인 API 개발
 
-Resolves: #123
-Ref: #456
-Related to: #48, #45</code></pre>
+Resolves: #123 Ref: #456 Related to: #48, #45</code></pre>
+
 <blockquote>
 <h3 id="7-commit-message-emogji">7. Commit Message Emogji</h3>
 </blockquote>
