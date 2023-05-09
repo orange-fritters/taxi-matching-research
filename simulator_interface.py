@@ -22,7 +22,7 @@ class Request(TypedDict):
     destination_loc: int  # 목적동
 
 
-class SimulaterInterface(metaclass=ABCMeta):
+class SimulatorInterface(metaclass=ABCMeta):
     @abstractmethod
     def __init__(self,
                  total_time: int,
@@ -89,6 +89,7 @@ class SimulaterInterface(metaclass=ABCMeta):
             self.vehicles : modified self.vehicles
         """
         pass
+
 
     @abstractmethod
     def assign_weight(self) -> np.array:
