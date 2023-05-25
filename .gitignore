@@ -1,3 +1,6 @@
 *.xlsx
 *.ipynb
 *.txt
+/taxi
+.DS_Store
+*.csv
