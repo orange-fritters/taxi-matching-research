@@ -4,3 +4,4 @@
 /taxi
 .DS_Store
 *.csv
+__pycache__
