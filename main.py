@@ -5,12 +5,23 @@ from simulator_interface import SimulatorInterface
 
 # Read in the data
 df = pd.read_csv('/Users/juuc/Downloads/20230227.csv')
-df.columns
+len(df)
 Simualation = SimulatorInterface(df, 1440, 5)
 waiting_times = Simualation.simulate()
-
+len(df['no'].unique())
+len(df['startposid'].unique())
+len(df['endposid'].unique())
 for veh_id in df['no'].unique():
-    print(df.loc[df['no'] == veh_id, 'startpos2'].iloc[0])
+    print(df.loc[df['no'] == veh_id, 'startposid'].iloc[0])
+
+# Calculate the number of requests for each unique vehicle number
+request_counts = df.groupby('no')['no'].count()
+# Plot a histogram of the request counts
+plt.hist(request_counts, bins=30)
+plt.xlabel('Number of Requests')
+plt.ylabel('Frequency')
+plt.title('Request Count Distribution')
+plt.show()
 
 for req_id, time in enumerate(waiting_times):
     # Plot a histogram of the waiting times

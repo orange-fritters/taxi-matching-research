@@ -36,11 +36,11 @@ class SimulatorInterface(metaclass=ABCMeta):
         self.data: pd.DataFrame = data
         self.requests: Dict[int, Request] = {} # key : ID, value: Request
         self.vehicles: Dict[int, Vehicle] = self.init_make_vehicles() # key : ID, value: Vehicle
-        self.waiting_times: Dict[int, int] = ... # key : request ID, value : waiting time
+        self.waiting_times: Dict[int, int] = {} # key : request ID, value : waiting time
         self.model = Model()
         self.total_time = total_time        # 총합 시간 (첨두 비첨두 따라 다르므로, 단위 : min)
-        self.time_window = time_window      # batch interval (단위 : min)
-        self.counter = 0                    # self.data에서 현재 추적중인 행
+        self.time_window = time_window - 1  # batch interval (단위 : min)
+        self.counter = 1                    # self.data에서 현재 추적중인 행
         self.matched_number = 0             # 매칭된 요청의 수(최종 리턴 값)
 
     def init_make_vehicles(self):
@@ -49,7 +49,7 @@ class SimulatorInterface(metaclass=ABCMeta):
             vehicle = Vehicle()
             vehicle.id = veh_id
             vehicle.ETA = 0
-            vehicle.curr_loc = self.data.loc[self.data['no'] == veh_id, 'startpos2'].iloc[0]
+            vehicle.curr_loc = self.data.loc[self.data['no'] == veh_id, 'startposid'].iloc[0]
             vehicle.curr_time = 0
             vehicle.available = True
             vehicle.working = True # TODO : Implement working
@@ -105,16 +105,19 @@ class SimulatorInterface(metaclass=ABCMeta):
         Update the requests variable and waiting times for some requests time by time 
         """
         df = self.data
-        while df.loc[self.counter, "desiredtime"] <= time:
-            req = Request()
-            req.id = self.counter
-            req.travel_time = df.loc[self.counter, "endtime"] - df.loc[self.counter, "ridetime"]
-            req.request_time = df.loc[self.counter, "desiredtime"]
-            req.origin_loc = df.loc[self.counter, "startpos2"]
-            req.destination_loc = df.loc[self.counter, "endpos2"]
-            self.requests[req.id] = req
-            self.waiting_times[req.id] = 0
-            self.counter += 1
+        if self.counter < len(df):
+            while df.loc[self.counter - 1, "desiredtime"] < time:
+                req = Request()
+                req.id = self.counter
+                req.travel_time = df.loc[self.counter, "endtime"] - df.loc[self.counter, "ridetime"]
+                req.request_time = df.loc[self.counter, "desiredtime"]
+                req.origin_loc = df.loc[self.counter, "startposid"]
+                req.destination_loc = df.loc[self.counter, "endposid"]
+                self.requests[req.id] = req
+                self.waiting_times[req.id] = 0
+                self.counter += 1
+                if self.counter >= len(df):
+                    break
     
     def filter_vehicles(self) -> None:
         """
@@ -139,10 +142,10 @@ class SimulatorInterface(metaclass=ABCMeta):
         Returns:
             weight : modified self.vehicles
         """
-        weight, id_to_index = self.model.assign(self.requests, self.vehicles)
-        return weight, id_to_index
+        weight, index_to_id = self.model.assign(self.requests, self.vehicles)
+        return weight, index_to_id
 
-    def KM_algorithm(self, weight: np.array, id_to_index: Dict) -> List[Tuple]:
+    def KM_algorithm(self, weight: np.array, index_to_id: Dict) -> List[Tuple]:
         """
         KM Algorithm
         Args:
@@ -154,13 +157,9 @@ class SimulatorInterface(metaclass=ABCMeta):
             matched_pair : List[Tuple] = ...  # Tuple : (veh_id, request_id)
         """
         vehicle_indices, request_indices = linear_sum_assignment(weight)
-        
-        # TODO : Implement KM Algorithm
-        # weight의 row에 request, col에 vehicle을 배치할 것이므로
-        # col_ind가 각 request별 배정된 vehicle의 index가 될 것임
         assignments = []
         for vehicle_index, request_index in zip(vehicle_indices, request_indices):
-            vehicle_id, request_id = id_to_index[(vehicle_index, request_index)]
+            vehicle_id, request_id = index_to_id[(vehicle_index, request_index)]
             assignments.append((vehicle_id, request_id))
 
         return assignments
@@ -178,7 +177,7 @@ class SimulatorInterface(metaclass=ABCMeta):
         Raises:
             KeyError: Raises an exception.
         """
-
+        # TODO: Implement log function to know the distribution of waiting time
 
     
     def match(self) -> None:
@@ -191,8 +190,8 @@ class SimulatorInterface(metaclass=ABCMeta):
             self.vehicles
             self.requests
         """
-        weight, id_to_index = self.assign_weight()
-        matched_pair = self.KM_algorithm(weight, id_to_index)
+        weight, index_to_id = self.assign_weight()
+        matched_pair = self.KM_algorithm(weight, index_to_id)
         self.matched_number += len(matched_pair)
         self.log(matched_pair)
         self.update_vehicle_object(matched_pair)
@@ -211,5 +210,6 @@ class SimulatorInterface(metaclass=ABCMeta):
             else:
                 self.filter_vehicles()
                 self.match()
+                print(f"Time : {t}, Matched : {self.matched_number}")
                 tmp = 0
-        return self.waiting_times # It contains each request's waiting time
+        return self.waiting_times # It contains each request's waiting time (log)
