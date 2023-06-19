@@ -1,48 +1,61 @@
 from abc import *
-from typing import List, Tuple, TypedDict, Dict
+from typing import List, Tuple, Dict
 import pandas as pd
 import numpy as np
 from weight_assigning_model import Model
 from scipy.optimize import linear_sum_assignment
 
 
-class Vehicle(TypedDict):
+class Vehicle():
     id: int
-    destination_loc: int
-    ETA: int
-    curr_loc: int
-    curr_time: int
-    available: bool
-    working: bool
+    # destination_loc: int
+    ETA: int            # 남은 시간 (운행중이지 않으면 0)
+    curr_loc: int       # destination_loc이 정해지는 순간 변경됨
+    curr_time: int      # 그냥 현재 시간 알려줌 리팩토링할 때 없애도 되는 변수?
+    available: bool     # 현재 공차 여부, 근데 ETA가 5 이하이면 True
+    working: bool       # 현재 기사님이 일하는지 여부
 
 
-class Request(TypedDict):
+class Request():
     id: int
     travel_time: int      # 이동한 시간 == 하차 시간 - 탑승 시간
     request_time: int     # 요청 시각
-    origin_loc: int       # 출발동
-    destination_loc: int  # 목적동
+    origin_loc: int       # startpos2
+    destination_loc: int  # endpos2
 
 
 class SimulatorInterface(metaclass=ABCMeta):
-    @abstractmethod
+    
     def __init__(self,
+                 data: pd.DataFrame,
                  total_time: int,
                  time_window: int) -> None:
         """
         Simulator class for simulation
         """
-        self.data: pd.DataFrame = ...
-        self.requests: Dict[int, Request] = ... # key : ID, value: Request
-        self.vehicles: Dict[int, Vehicle] = ... # key : ID, value: Vehicle
-        self.waiting_times: Dict[int, int] = ... # key : request ID, value : waiting time
+        self.data: pd.DataFrame = data
+        self.requests: Dict[int, Request] = {} # key : ID, value: Request
+        self.vehicles: Dict[int, Vehicle] = self.init_make_vehicles() # key : ID, value: Vehicle
+        self.waiting_times: Dict[int, int] = {} # key : request ID, value : waiting time
         self.model = Model()
         self.total_time = total_time        # 총합 시간 (첨두 비첨두 따라 다르므로, 단위 : min)
-        self.time_window = time_window      # batch interval (단위 : min)
-        self.counter = 0                    # self.data에서 현재 추적중인 행
+        self.time_window = time_window - 1  # batch interval (단위 : min)
+        self.counter = 1                    # self.data에서 현재 추적중인 행
         self.matched_number = 0             # 매칭된 요청의 수(최종 리턴 값)
 
-    @abstractmethod
+    def init_make_vehicles(self):
+        vehicles = {}
+        for veh_id in self.data['no'].unique():
+            vehicle = Vehicle()
+            vehicle.id = veh_id
+            vehicle.ETA = 0
+            vehicle.curr_loc = self.data.loc[self.data['no'] == veh_id, 'startposid'].iloc[0]
+            vehicle.curr_time = 0
+            vehicle.available = True
+            vehicle.working = True # TODO : Implement working
+            vehicles[veh_id] = vehicle
+        return vehicles
+    
     def update_vehicle_status(self):
         """
         1. Update Vehicle's ETA by Subtracting Each
@@ -53,14 +66,14 @@ class SimulatorInterface(metaclass=ABCMeta):
         Update:
             self.vehicles
         """
-        for vehicle in self.vehicles:
+        for vehicle in self.vehicles.values():
+            vehicle.curr_time += 1
             if vehicle.ETA > 0:
                 vehicle.ETA -= 1
             # if vehicle.ETA == 0: <- filter_vehicles에서 이미 available 처리됨
 
         # TODO : Update Vehicle's availability by work started and ended)
-
-    @abstractmethod
+    
     def update_vehicle_object(self,
                               matched_pair: List[Tuple]):
         """
@@ -85,28 +98,27 @@ class SimulatorInterface(metaclass=ABCMeta):
 
         for req_id in self.requests: # unmatched requests are in self.requests
             self.waiting_times[req_id] += self.time_window
-
-
-    @abstractmethod
+    
     def update_requests(self,
                      time: int) -> None:
         """
         Update the requests variable and waiting times for some requests time by time 
         """
-        data = self.data
-        while data.loc[self.counter, "희망일시"] <= time:
-            req = Request()
-            req.id = self.counter
-            req.travel_time = data.loc[self.counter, "하차시간"] - data.loc[self.counter, "탑승시간"]
-            req.request_time = data.loc[self.counter, "희망일시"]
-            req.origin_loc = data.loc[self.counter, "출발동"]
-            req.destination_loc = data.loc[self.counter, "목적동"]
-            self.requests[req.id] = req
-            self.waiting_times[req.id] = 0
-            self.counter += 1
-
-
-    @abstractmethod
+        df = self.data
+        if self.counter < len(df):
+            while df.loc[self.counter - 1, "desiredtime"] < time:
+                req = Request()
+                req.id = self.counter
+                req.travel_time = df.loc[self.counter, "endtime"] - df.loc[self.counter, "ridetime"]
+                req.request_time = df.loc[self.counter, "desiredtime"]
+                req.origin_loc = df.loc[self.counter, "startposid"]
+                req.destination_loc = df.loc[self.counter, "endposid"]
+                self.requests[req.id] = req
+                self.waiting_times[req.id] = 0
+                self.counter += 1
+                if self.counter >= len(df):
+                    break
+    
     def filter_vehicles(self) -> None:
         """
         Modify self.vehicle's available parameter for current requests
@@ -116,12 +128,10 @@ class SimulatorInterface(metaclass=ABCMeta):
         Returns:
             self.vehicles : modified self.vehicles
         """
-        for vehicle in self.vehicles.items():
+        for vehicle in self.vehicles.values():
             if not vehicle.available and vehicle.ETA <= 5:
                 vehicle.available = True
                 
-
-    @abstractmethod
     def assign_weight(self) -> np.array:
         """
         Using the model, return the weight
@@ -132,11 +142,10 @@ class SimulatorInterface(metaclass=ABCMeta):
         Returns:
             weight : modified self.vehicles
         """
-        weight: np.array = self.model.assign(self.requests, self.vehicles)
-        return weight
+        weight, index_to_id = self.model.assign(self.requests, self.vehicles)
+        return weight, index_to_id
 
-    @abstractmethod
-    def KM_algorithm(self, weight: np.array) -> List[Tuple]:
+    def KM_algorithm(self, weight: np.array, index_to_id: Dict) -> List[Tuple]:
         """
         KM Algorithm
         Args:
@@ -147,15 +156,15 @@ class SimulatorInterface(metaclass=ABCMeta):
         Returns:
             matched_pair : List[Tuple] = ...  # Tuple : (veh_id, request_id)
         """
-        row_ind, col_ind = linear_sum_assignment(weight)
-        # TODO : Implement KM Algorithm
-        # weight의 row에 request, col에 vehicle을 배치할 것이므로
-        # col_ind가 각 request별 배정된 vehicle의 index가 될 것임
+        vehicle_indices, request_indices = linear_sum_assignment(weight)
+        assignments = []
+        for vehicle_index, request_index in zip(vehicle_indices, request_indices):
+            vehicle_id, request_id = index_to_id[(vehicle_index, request_index)]
+            assignments.append((vehicle_id, request_id))
 
-        matched_pair: List[Tuple] = ...  # Tuple : (veh_idx, request_id)
-        return matched_pair
+        return assignments
 
-    @abstractmethod
+    
     def log(self, matched_pair: List[Tuple]) -> None:
         """
         Log waiting time
@@ -168,9 +177,9 @@ class SimulatorInterface(metaclass=ABCMeta):
         Raises:
             KeyError: Raises an exception.
         """
-        self.waiting_times = ...
+        # TODO: Implement log function to know the distribution of waiting time
 
-    @abstractmethod
+    
     def match(self) -> None:
         """
         Conduct matching process
@@ -181,13 +190,13 @@ class SimulatorInterface(metaclass=ABCMeta):
             self.vehicles
             self.requests
         """
-        weight = self.assign_weight()
-        matched_pair = self.KM_algorithm(weight=weight)
+        weight, index_to_id = self.assign_weight()
+        matched_pair = self.KM_algorithm(weight, index_to_id)
         self.matched_number += len(matched_pair)
-        self.log(matched_pair=matched_pair)
-        self.update_vehicle_object(matched_pair=matched_pair)
+        self.log(matched_pair)
+        self.update_vehicle_object(matched_pair)
 
-    @abstractmethod
+    
     def simulate(self) -> List[int]:
         """
         Simulate
@@ -201,6 +210,6 @@ class SimulatorInterface(metaclass=ABCMeta):
             else:
                 self.filter_vehicles()
                 self.match()
+                print(f"Time : {t}, Matched : {self.matched_number}")
                 tmp = 0
-        return self.waiting_times
-
+        return self.waiting_times # It contains each request's waiting time (log)
