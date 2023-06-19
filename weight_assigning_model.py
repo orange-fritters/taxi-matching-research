@@ -27,28 +27,30 @@ def calculate_time_arrival(loc1: int, loc2: int):
 
 class Model:
     def __init__(self, 
-                 a : float = 1, 
-                 b : float = 1):
+                 a : float = 0.1, 
+                 b : float = 0.1):
         self.a = a
         self.b = b
     
     def calculate_weight(self, vehicle: Vehicle, request: Request):
         # 계산식 : 
-        arrival_time = self.calculate_time_arrival(1, 2)
+        arrival_time = calculate_time_arrival(1, 2)
         # 거리에 따른 시간 + 만약 곧 도착 예정인 차량이라면 남은 시간 + (승객의 대기시간)
-        return np.exp(-self.a * (arrival_time + vehicle.ETA) + self.b * (vehicle.curr_time - request.request_time))
+        return np.exp(-self.a * (arrival_time + vehicle.ETA) + self.b * (request.request_time - vehicle.curr_time))
     
     def assign(self, requests: Dict[int, Request], vehicles: Dict[int, Vehicle]):
-        num_of_vehicles = sum([vehicle.available for vehicle in vehicles.values()])
-        matrix = np.zeros((len(num_of_vehicles), len(requests)))
+        num_of_vehicles = sum([vehicle.available and vehicle.working for vehicle in vehicles.values()])
+        matrix = np.zeros((num_of_vehicles, len(requests)))
 
         index_to_id = {}
-        for vehicle_idx, vehicle in enumerate(vehicles.values()):
-            if (not vehicle.available):
+        vehicle_idx = 0
+        for vehicle in vehicles.values():
+            if (not vehicle.available or not vehicle.working):
                 continue
             for request_idx, request in enumerate(requests.values()):
                 weight = self.calculate_weight(vehicle, request)  # Your weight calculation function
                 matrix[vehicle_idx, request_idx] = weight
                 index_to_id[(vehicle_idx, request_idx)] = (vehicle.id, request.id)
+            vehicle_idx += 1    
 
         return matrix, index_to_id

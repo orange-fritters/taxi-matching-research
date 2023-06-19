@@ -23,29 +23,33 @@ class Request():
     destination_loc: int  # endpos2
 
 
-class SimulatorInterface(metaclass=ABCMeta):
-    
+class Simulator():
     def __init__(self,
-                 data: pd.DataFrame,
+                 root: str,
                  total_time: int,
                  time_window: int,
-                 tolerance: int = 5) -> None:
+                 tolerance: int = 5,
+                 a : float = 0.1,
+                 b : float = 0.1) -> None:
         """
         Simulator class for simulation
         """
-        self.data: pd.DataFrame = data
+        self.data: pd.DataFrame = pd.read_csv(root)
+        self.model = Model(a, b)
         self.requests: Dict[int, Request] = {} # key : ID, value: Request
-        self.vehicles: Dict[int, Vehicle] = self.init_make_vehicles() # key : ID, value: Vehicle
+        self.vehicles: Dict[int, Vehicle] = self.init_vehicles() # key : ID, value: Vehicle
         self.waiting_times: Dict[int, int] = {} # key : request ID, value : waiting time
-        self.model = Model()
+        self.vehicle_start_time: Dict[int, List[int]] = {}
+        self.vehicle_end_time: Dict[int, List[int]] = {} 
+                                            # key : time, value : list of vehicle ID
         self.total_time = total_time        # 총합 시간 (첨두 비첨두 따라 다르므로, 단위 : min)
         self.time_window = time_window      # batch interval (단위 : min)
         self.counter = 0                    # self.data에서 현재 추적중인 행
         self.matched_number = 0             # 매칭된 요청의 수(최종 리턴 값)
-        self.tolerance = tolerance
+        self.tolerance = tolerance          # ETA 남은 시간에 따라 availability를 결정할 때 사용할 tolerance
         self.log_data = pd.DataFrame(columns=['curr_time', 'request_id', 'waiting_time', 'arrival_time', 'total_time', 'req_loc'])
 
-    def init_make_vehicles(self):
+    def init_vehicles(self):
         vehicles = {}
         for veh_id in self.data['no'].unique():
             vehicle = Vehicle()
@@ -53,8 +57,8 @@ class SimulatorInterface(metaclass=ABCMeta):
             vehicle.ETA = 0
             vehicle.curr_loc = self.data.loc[self.data['no'] == veh_id, 'startposid'].iloc[0]
             vehicle.curr_time = 0
-            vehicle.available = True
-            vehicle.working = True # TODO : Implement working
+            vehicle.available = False
+            vehicle.working = False 
             vehicles[veh_id] = vehicle
         return vehicles
     
@@ -73,8 +77,6 @@ class SimulatorInterface(metaclass=ABCMeta):
             if vehicle.ETA > 0:
                 vehicle.ETA -= 1
             # if vehicle.ETA == 0: <- filter_vehicles에서 이미 available 처리됨
-
-        # TODO : Update Vehicle's availability by work started and ended)
     
     def update_vehicle_object(self,
                               matched_pair: List[Tuple]):
@@ -93,15 +95,20 @@ class SimulatorInterface(metaclass=ABCMeta):
           self.requests
           self.vehicles
         """
+        for req_id in self.requests: # unmatched requests are in self.requests
+            if (self.waiting_times[req_id] == 0):
+                self.waiting_times[req_id] += self.time_window - self.requests[req_id].request_time % self.time_window
+            else:
+                self.waiting_times[req_id] += self.time_window
+
         for veh_id, req_id in matched_pair:
             self.vehicles[veh_id].destination_loc = self.requests[req_id].destination_loc
-            self.vehicles[veh_id].ETA = self.requests[req_id].travel_time
+            self.vehicles[veh_id].ETA += self.requests[req_id].travel_time 
+            self.vehicles[veh_id].ETA += calculate_time_arrival(self.vehicles[veh_id].curr_loc, self.requests[req_id].origin_loc)
             self.vehicles[veh_id].available = False
             self.vehicles[veh_id].curr_loc = self.requests[req_id].origin_loc
             del self.requests[req_id]
 
-        for req_id in self.requests: # unmatched requests are in self.requests
-            self.waiting_times[req_id] += self.time_window
     
     def _create_request(self, counter):
         req = Request()
@@ -112,6 +119,37 @@ class SimulatorInterface(metaclass=ABCMeta):
         req.destination_loc = self.data.loc[counter, "endposid"]
         req.arrival_time = 0
         return req
+    
+    def _init_vehicle_working(self,
+                              counter: int):
+        car_id = self.data.loc[counter, "no"]
+        car_marker = self.data.loc[counter, "car_marker"]
+        start_time = self.data.loc[counter, "settime"]
+        end_time = self.data.loc[counter, "endtime"]
+
+        if car_marker in {"start", "once"}:
+            if start_time not in self.vehicle_start_time:
+                self.vehicle_start_time[start_time] = [car_id]
+            else:
+                self.vehicle_start_time[start_time].append(car_id)
+            self.vehicles[car_id].working = True
+
+        if car_marker in {"once", "end"}:
+            if end_time not in self.vehicle_end_time:
+                self.vehicle_end_time[end_time] = [car_id]
+            else:
+                self.vehicle_end_time[end_time].append(car_id)
+
+
+    def _check_vehicle_working(self,
+                               time : int):
+        if (self.vehicle_end_time.get(time) is not None):
+            for id in self.vehicle_end_time[time]:
+                self.vehicles[id].working = False
+        if (self.vehicle_start_time.get(time) is not None):
+            for id in self.vehicle_start_time[time]:
+                self.vehicles[id].working = True
+        
 
     def update_requests(self, 
                         time: int):
@@ -119,12 +157,14 @@ class SimulatorInterface(metaclass=ABCMeta):
         Update the requests variable and waiting times for some requests time by time 
         Data should be sorted by desiredtime
         """
-        df = self.data
-        while self.counter < len(df) and df.loc[self.counter, "desiredtime"] == time:
+        self._check_vehicle_working(time)
+        while self.counter < len(self.data) and self.data.loc[self.counter, "desiredtime"] == time:
+            self._init_vehicle_working(self.counter)
             req = self._create_request(self.counter)
             self.requests[req.id] = req
             self.waiting_times[req.id] = 0
             self.counter += 1
+
     
     def filter_vehicles(self) -> None:
         """
@@ -136,9 +176,10 @@ class SimulatorInterface(metaclass=ABCMeta):
             self.vehicles : modified self.vehicles
         """
         for vehicle in self.vehicles.values():
-            if not vehicle.available and vehicle.ETA <= self.tolerance:
+            if vehicle.working and not vehicle.available and vehicle.ETA <= self.tolerance:
                 vehicle.available = True
-                
+
+
     def assign_weight(self) -> np.array:
         """
         Using the model, return the weight
@@ -151,6 +192,7 @@ class SimulatorInterface(metaclass=ABCMeta):
         """
         weight, index_to_id = self.model.assign(self.requests, self.vehicles)
         return weight, index_to_id
+
 
     def KM_algorithm(self, 
                      weight: np.array, 
@@ -174,6 +216,22 @@ class SimulatorInterface(metaclass=ABCMeta):
         return assignments
 
     
+    def match(self) -> None:
+        """
+        Conduct matching process
+        Variable:
+            self.vehicles
+            self.requests
+        Update:
+            self.vehicles
+            self.requests
+        """
+        weight, index_to_id = self.assign_weight()
+        matched_pair = self.KM_algorithm(weight, index_to_id)
+        self.matched_number += len(matched_pair)
+        self.log(matched_pair)
+        self.update_vehicle_object(matched_pair)
+
     def log(self, 
             matched_pair: List[Tuple]) -> None:
         """
@@ -192,34 +250,18 @@ class SimulatorInterface(metaclass=ABCMeta):
             arrival_time = calculate_time_arrival(self.vehicles[veh_id].curr_loc, self.requests[req_id].origin_loc)
             total_time = waiting_time + arrival_time
             req_loc = self.requests[req_id].origin_loc
-            self.log_data = self.log_data.append({
-                'curr_time': self.vehicles[veh_id].curr_time,
-                'request_id': req_id,
-                'waiting_time': waiting_time,
-                'arrival_time': arrival_time,
-                'total_time': total_time,
-                'req_loc': req_loc
-            }, ignore_index=True)
-        # TODO: Implement log function to know the distribution of waiting time
+            new_row = pd.DataFrame({
+                'curr_time': [self.vehicles[veh_id].curr_time],
+                'request_id': [req_id],
+                'waiting_time': [waiting_time],
+                'arrival_time': [arrival_time],
+                'total_time': [total_time],
+                'req_loc': [req_loc]
+            })
+            self.total_time += total_time
+            self.log_data = pd.concat([self.log_data, new_row], ignore_index=True)
 
-    
-    def match(self) -> None:
-        """
-        Conduct matching process
-        Variable:
-            self.vehicles
-            self.requests
-        Update:
-            self.vehicles
-            self.requests
-        """
-        weight, index_to_id = self.assign_weight()
-        matched_pair = self.KM_algorithm(weight, index_to_id)
-        self.matched_number += len(matched_pair)
-        self.log(matched_pair)
-        self.update_vehicle_object(matched_pair)
 
-    
     def simulate(self) -> List[int]:
         """
         Simulate
@@ -231,7 +273,8 @@ class SimulatorInterface(metaclass=ABCMeta):
             if t % self.time_window == 0 and t != 0:
                 self.filter_vehicles()
                 self.match()
-                print(f"Time : {t}, Matched : {self.matched_number}")
+                cars = sum([car.available and car.working for car in self.vehicles.values()])
+                print(f"Time : {t}, Matched : {self.matched_number}, 공차: {cars}, 8315 : {self.vehicles[8153].available}")
         
         self.log_data.to_csv("log.csv")
-        return self.waiting_times # It contains each request's waiting time (log)
+        return self.total_time # It contains each request's waiting time (log)
