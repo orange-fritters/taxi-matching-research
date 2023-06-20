@@ -1,5 +1,6 @@
 from abc import *
 from typing import List, Tuple, Dict
+import random
 import pandas as pd
 import numpy as np
 from weight_assigning_model import Model
@@ -26,11 +27,13 @@ class Request():
 class Simulator():
     def __init__(self,
                  root: str,
+                 exp_name : str,
                  total_time: int,
                  time_window: int,
                  tolerance: int = 5,
                  a : float = 0.1,
-                 b : float = 0.1) -> None:
+                 b : float = 0.1,
+                 ) -> None:
         """
         Simulator class for simulation
         """
@@ -43,12 +46,16 @@ class Simulator():
         self.vehicle_end_time: Dict[int, List[int]] = {} 
                                             # key : time, value : list of vehicle ID
         self.total_time = total_time        # 총합 시간 (첨두 비첨두 따라 다르므로, 단위 : min)
-        self.time_window = time_window      # batch interval (단위 : min)
         self.counter = 0                    # self.data에서 현재 추적중인 행
         self.matched_number = 0             # 매칭된 요청의 수(최종 리턴 값)
-        self.tolerance = tolerance          # ETA 남은 시간에 따라 availability를 결정할 때 사용할 tolerance
         self.log_data = pd.DataFrame(columns=['curr_time', 'request_id', 'waiting_time', 'arrival_time', 'total_time', 'req_loc'])
         self.time_to_ref = 0
+        self.exp_name = exp_name
+
+        self.tolerance = tolerance          # ETA 남은 시간에 따라 availability를 결정할 때 사용할 tolerance
+        self.time_window = time_window      # batch interval (단위 : min)
+        self.a = a                          # weight for arrival time
+        self.b = b                          # weight for waiting time
 
     def init_vehicles(self):
         vehicles = {}
@@ -56,7 +63,7 @@ class Simulator():
             vehicle = Vehicle()
             vehicle.id = veh_id
             vehicle.ETA = 0
-            vehicle.curr_loc = self.data.loc[self.data['no'] == veh_id, 'startposid'].iloc[0]
+            vehicle.curr_loc = random.randint(0, 433)
             vehicle.curr_time = 0
             vehicle.available = False
             vehicle.working = False 
@@ -206,12 +213,14 @@ class Simulator():
             else:
                 self.waiting_times[req_id] += self.time_window
 
-                
+
         for veh_id, req_id in matched_pair:
             waiting_time = self.waiting_times[req_id]
             arrival_time = self.model.calculate_time_arrival(self.time_to_ref,
                                                              self.vehicles[veh_id].curr_loc, 
                                                              self.requests[req_id].origin_loc)
+            if (self.vehicles[veh_id].ETA  > 0):
+                arrival_time += self.vehicles[veh_id].ETA
             total_time = waiting_time + arrival_time
             req_loc = self.requests[req_id].origin_loc
             new_row = pd.DataFrame({
@@ -245,10 +254,21 @@ class Simulator():
         """
         for veh_id, req_id in matched_pair:
             self.vehicles[veh_id].ETA += self.requests[req_id].travel_time 
-            self.vehicles[veh_id].ETA += self.model.calculate_time_arrival(self.time_to_ref,
-                                                                           self.vehicles[veh_id].curr_loc, 
-                                                                           self.requests[req_id].origin_loc)
+            arrival_time = self.model.calculate_time_arrival(self.time_to_ref,
+                                                             self.vehicles[veh_id].curr_loc, 
+                                                             self.requests[req_id].origin_loc)
+            self.vehicles[veh_id].ETA += arrival_time
+            self.vehicles[veh_id].ETA += 5 # 승하차 시간
             self.vehicles[veh_id].available = False
+
+            # if (veh_id == 1475):
+            #     print("Vehicle ", veh_id,
+            #        " curr loc : ", self.vehicles[veh_id].curr_loc,
+            #        " to ", self.requests[req_id].origin_loc, 
+            #        " arrival time ", arrival_time,
+            #        " destination : ", self.requests[req_id].destination_loc,
+            #        " travel time ", self.requests[req_id].travel_time)
+
             self.vehicles[veh_id].curr_loc = self.requests[req_id].destination_loc
             del self.requests[req_id]
 
@@ -282,10 +302,12 @@ class Simulator():
             if t % self.time_window == 0 and t != 0:
                 self.filter_vehicles()
                 self.match()
-                cars = sum([car.available and car.working for car in self.vehicles.values()])
-                woring_cars = sum([car.working for car in self.vehicles.values()])
-                print(f"Time : {t}, Requests: {len(self.requests)}, Matched : {self.matched_number}, 공차: {cars}, 총 차량: {woring_cars}")
+
+                # cars = sum([car.available and car.working for car in self.vehicles.values()])
+                # woring_cars = sum([car.working for car in self.vehicles.values()])
+                # print(f"Time : {t}, Requests: {len(self.requests)}, Matched : {self.matched_number}, 공차: {cars}, 총 차량: {woring_cars}")
             self.time_to_ref += 1
         
-        self.log_data.to_csv(file_name)
+        name_of_file = f"/a_{self.a}_b_{self.b}_tw_{self.time_window}_tol_{self.tolerance}.csv"
+        self.log_data.to_csv("results/" + self.exp_name + name_of_file, index=False)
         return self.total_time # It contains each request's waiting time (log)
