@@ -9,7 +9,7 @@ def get_arguments():
     parser.add_argument('--data_path', type=str, default='data/output.csv')
     parser.add_argument('--total_time', type=int, default=1440)
     parser.add_argument('--time_window', type=int, default=5)
-    parser.add_argument('--tolerance', type=int, default=0)
+    parser.add_argument('--tolerance', type=int, default=10)
     parser.add_argument('--a', type=float, default=0.1)
     parser.add_argument('--b', type=float, default=0.1)
     args = parser.parse_args()

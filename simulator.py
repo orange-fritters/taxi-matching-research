@@ -2,7 +2,7 @@ from abc import *
 from typing import List, Tuple, Dict
 import pandas as pd
 import numpy as np
-from weight_assigning_model import Model, calculate_time_arrival
+from weight_assigning_model import Model
 from scipy.optimize import linear_sum_assignment
 
 
@@ -48,6 +48,7 @@ class Simulator():
         self.matched_number = 0             # 매칭된 요청의 수(최종 리턴 값)
         self.tolerance = tolerance          # ETA 남은 시간에 따라 availability를 결정할 때 사용할 tolerance
         self.log_data = pd.DataFrame(columns=['curr_time', 'request_id', 'waiting_time', 'arrival_time', 'total_time', 'req_loc'])
+        self.time_to_ref = 0
 
     def init_vehicles(self):
         vehicles = {}
@@ -61,7 +62,8 @@ class Simulator():
             vehicle.working = False 
             vehicles[veh_id] = vehicle
         return vehicles
-    
+
+
     def update_vehicle_status(self):
         """
         1. Update Vehicle's ETA by Subtracting Each
@@ -76,50 +78,20 @@ class Simulator():
             vehicle.curr_time += 1
             if vehicle.ETA > 0:
                 vehicle.ETA -= 1
-            # if vehicle.ETA == 0: <- filter_vehicles에서 이미 available 처리됨
-    
-    def update_vehicle_object(self,
-                              matched_pair: List[Tuple]):
-        """
-        1. Update Vehicle's Destination 
-        2. Set Vehicle's ETA by Request's travel_time
-        3. Remove Processed Request
-        4. For Unmatched Requests, Update waiting time
+            if vehicle.ETA == 0:
+                vehicle.available = True
 
-        Args:
-          matched_pair
-        Variables: 
-          self.requests
-          self.vehicles
-        Update:
-          self.requests
-          self.vehicles
-        """
-        for req_id in self.requests: # unmatched requests are in self.requests
-            if (self.waiting_times[req_id] == 0):
-                self.waiting_times[req_id] += self.time_window - self.requests[req_id].request_time % self.time_window
-            else:
-                self.waiting_times[req_id] += self.time_window
 
-        for veh_id, req_id in matched_pair:
-            self.vehicles[veh_id].destination_loc = self.requests[req_id].destination_loc
-            self.vehicles[veh_id].ETA += self.requests[req_id].travel_time 
-            self.vehicles[veh_id].ETA += calculate_time_arrival(self.vehicles[veh_id].curr_loc, self.requests[req_id].origin_loc)
-            self.vehicles[veh_id].available = False
-            self.vehicles[veh_id].curr_loc = self.requests[req_id].origin_loc
-            del self.requests[req_id]
-
-    
-    def _create_request(self, counter):
-        req = Request()
-        req.id = counter
-        req.travel_time = self.data.loc[counter, "endtime"] - self.data.loc[counter, "ridetime"]
-        req.request_time = self.data.loc[counter, "desiredtime"]
-        req.origin_loc = self.data.loc[counter, "startposid"]
-        req.destination_loc = self.data.loc[counter, "endposid"]
-        req.arrival_time = 0
-        return req
-    
+    def _check_vehicle_working(self,
+                               time : int):
+        if (self.vehicle_end_time.get(time) is not None):
+            for id in self.vehicle_end_time[time]:
+                self.vehicles[id].working = False
+        if (self.vehicle_start_time.get(time) is not None):
+            for id in self.vehicle_start_time[time]:
+                self.vehicles[id].working = True
+        
+        
     def _init_vehicle_working(self,
                               counter: int):
         car_id = self.data.loc[counter, "no"]
@@ -132,7 +104,6 @@ class Simulator():
                 self.vehicle_start_time[start_time] = [car_id]
             else:
                 self.vehicle_start_time[start_time].append(car_id)
-            self.vehicles[car_id].working = True
 
         if car_marker in {"once", "end"}:
             if end_time not in self.vehicle_end_time:
@@ -141,15 +112,15 @@ class Simulator():
                 self.vehicle_end_time[end_time].append(car_id)
 
 
-    def _check_vehicle_working(self,
-                               time : int):
-        if (self.vehicle_end_time.get(time) is not None):
-            for id in self.vehicle_end_time[time]:
-                self.vehicles[id].working = False
-        if (self.vehicle_start_time.get(time) is not None):
-            for id in self.vehicle_start_time[time]:
-                self.vehicles[id].working = True
-        
+    def _create_request(self, counter):
+        req = Request()
+        req.id = counter
+        req.travel_time = self.data.loc[counter, "endtime"] - self.data.loc[counter, "ridetime"]
+        req.request_time = self.data.loc[counter, "desiredtime"]
+        req.origin_loc = self.data.loc[counter, "startposid"]
+        req.destination_loc = self.data.loc[counter, "endposid"]
+        return req
+    
 
     def update_requests(self, 
                         time: int):
@@ -215,7 +186,73 @@ class Simulator():
 
         return assignments
 
-    
+
+    def log(self, 
+            matched_pair: List[Tuple]) -> None:
+        """
+        Log waiting time
+        Args:
+            matched_pair: List[Tuple] = ...  # Tuple : (veh_idx, request_id)
+        Variable:
+            self.waiting_time
+        Update:
+            self.waiting_time
+        Raises:
+            KeyError: Raises an exception.
+        """
+        for req_id in self.requests: # unmatched requests are in self.requests
+            if (self.waiting_times[req_id] == 0):
+                self.waiting_times[req_id] += self.time_window - self.requests[req_id].request_time % self.time_window
+            else:
+                self.waiting_times[req_id] += self.time_window
+
+                
+        for veh_id, req_id in matched_pair:
+            waiting_time = self.waiting_times[req_id]
+            arrival_time = self.model.calculate_time_arrival(self.time_to_ref,
+                                                             self.vehicles[veh_id].curr_loc, 
+                                                             self.requests[req_id].origin_loc)
+            total_time = waiting_time + arrival_time
+            req_loc = self.requests[req_id].origin_loc
+            new_row = pd.DataFrame({
+                'curr_time': [self.vehicles[veh_id].curr_time],
+                'request_id': [req_id],
+                'waiting_time': [waiting_time],
+                'arrival_time': [arrival_time],
+                'total_time': [total_time],
+                'req_loc': [req_loc]
+            })
+            self.total_time += total_time
+            self.log_data = pd.concat([self.log_data, new_row], ignore_index=True)
+
+
+    def update_vehicle_object(self,
+                              matched_pair: List[Tuple]):
+        """
+        1. Update Vehicle's Destination 
+        2. Set Vehicle's ETA by Request's travel_time
+        3. Remove Processed Request
+        4. For Unmatched Requests, Update waiting time
+
+        Args:
+          matched_pair
+        Variables: 
+          self.requests
+          self.vehicles
+        Update:
+          self.requests
+          self.vehicles
+        """
+        for veh_id, req_id in matched_pair:
+            self.vehicles[veh_id].ETA += self.requests[req_id].travel_time 
+            self.vehicles[veh_id].ETA += self.model.calculate_time_arrival(self.time_to_ref,
+                                                                           self.vehicles[veh_id].curr_loc, 
+                                                                           self.requests[req_id].origin_loc)
+            self.vehicles[veh_id].available = False
+            self.vehicles[veh_id].curr_loc = self.requests[req_id].destination_loc
+            del self.requests[req_id]
+
+
     def match(self) -> None:
         """
         Conduct matching process
@@ -232,37 +269,9 @@ class Simulator():
         self.log(matched_pair)
         self.update_vehicle_object(matched_pair)
 
-    def log(self, 
-            matched_pair: List[Tuple]) -> None:
-        """
-        Log waiting time
-        Args:
-            matched_pair: List[Tuple] = ...  # Tuple : (veh_idx, request_id)
-        Variable:
-            self.waiting_time
-        Update:
-            self.waiting_time
-        Raises:
-            KeyError: Raises an exception.
-        """
-        for veh_id, req_id in matched_pair:
-            waiting_time = self.waiting_times[req_id]
-            arrival_time = calculate_time_arrival(self.vehicles[veh_id].curr_loc, self.requests[req_id].origin_loc)
-            total_time = waiting_time + arrival_time
-            req_loc = self.requests[req_id].origin_loc
-            new_row = pd.DataFrame({
-                'curr_time': [self.vehicles[veh_id].curr_time],
-                'request_id': [req_id],
-                'waiting_time': [waiting_time],
-                'arrival_time': [arrival_time],
-                'total_time': [total_time],
-                'req_loc': [req_loc]
-            })
-            self.total_time += total_time
-            self.log_data = pd.concat([self.log_data, new_row], ignore_index=True)
 
-
-    def simulate(self) -> List[int]:
+    def simulate(self,
+                 file_name : str = "log.csv") -> List[int]:
         """
         Simulate
         """
@@ -274,7 +283,9 @@ class Simulator():
                 self.filter_vehicles()
                 self.match()
                 cars = sum([car.available and car.working for car in self.vehicles.values()])
-                print(f"Time : {t}, Matched : {self.matched_number}, 공차: {cars}, 8315 : {self.vehicles[8153].available}")
+                woring_cars = sum([car.working for car in self.vehicles.values()])
+                print(f"Time : {t}, Requests: {len(self.requests)}, Matched : {self.matched_number}, 공차: {cars}, 총 차량: {woring_cars}")
+            self.time_to_ref += 1
         
-        self.log_data.to_csv("log.csv")
+        self.log_data.to_csv(file_name)
         return self.total_time # It contains each request's waiting time (log)
