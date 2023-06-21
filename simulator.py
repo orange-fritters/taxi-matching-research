@@ -33,6 +33,7 @@ class Simulator():
                  tolerance: int = 5,
                  a : float = 0.1,
                  b : float = 0.1,
+                 is_greedy : bool = True,
                  ) -> None:
         """
         Simulator class for simulation
@@ -51,11 +52,13 @@ class Simulator():
         self.log_data = pd.DataFrame(columns=['curr_time', 'request_id', 'waiting_time', 'arrival_time', 'total_time', 'req_loc'])
         self.time_to_ref = 0
         self.exp_name = exp_name
+        self.waiting_time_sentinel = 0
 
         self.tolerance = tolerance          # ETA 남은 시간에 따라 availability를 결정할 때 사용할 tolerance
         self.time_window = time_window      # batch interval (단위 : min)
         self.a = a                          # weight for arrival time
         self.b = b                          # weight for waiting time
+        self.is_greedy = is_greedy
 
     def init_vehicles(self):
         vehicles = {}
@@ -142,6 +145,9 @@ class Simulator():
             self.requests[req.id] = req
             self.waiting_times[req.id] = 0
             self.counter += 1
+            if self.is_greedy:
+                self.filter_vehicles()
+                self.match()
 
     
     def filter_vehicles(self) -> None:
@@ -222,6 +228,7 @@ class Simulator():
             if (self.vehicles[veh_id].ETA  > 0):
                 arrival_time += self.vehicles[veh_id].ETA
             total_time = waiting_time + arrival_time
+            self.waiting_time_sentinel += total_time
             req_loc = self.requests[req_id].origin_loc
             new_row = pd.DataFrame({
                 'curr_time': [self.vehicles[veh_id].curr_time],
@@ -231,7 +238,7 @@ class Simulator():
                 'total_time': [total_time],
                 'req_loc': [req_loc]
             })
-            self.total_time += total_time
+
             self.log_data = pd.concat([self.log_data, new_row], ignore_index=True)
 
 
@@ -285,6 +292,7 @@ class Simulator():
         """
         weight, index_to_id = self.assign_weight()
         matched_pair = self.KM_algorithm(weight, index_to_id)
+        print('matched:',len(matched_pair), '공차:', sum([ vehicle.available for vehicle in self.vehicles.values()]))
         self.matched_number += len(matched_pair)
         self.log(matched_pair)
         self.update_vehicle_object(matched_pair)
@@ -310,4 +318,4 @@ class Simulator():
         
         name_of_file = f"/a_{self.a}_b_{self.b}_tw_{self.time_window}_tol_{self.tolerance}.csv"
         self.log_data.to_csv("results/" + self.exp_name + name_of_file, index=False)
-        return self.total_time # It contains each request's waiting time (log)
+        return self.waiting_time_sentinel # It contains each request's waiting time (log)
