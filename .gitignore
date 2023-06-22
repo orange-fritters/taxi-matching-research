@@ -6,3 +6,4 @@
 *.icloud
 __pycache__
 config.json
+*.csv

@@ -33,12 +33,13 @@ class Simulator():
                  tolerance: int = 5,
                  a : float = 0.1,
                  b : float = 0.1,
+                 c : float = 0.1
                  ) -> None:
         """
         Simulator class for simulation
         """
         self.data: pd.DataFrame = pd.read_csv(root)
-        self.model = Model(a, b)
+        self.model = Model(a, b, c)
         self.requests: Dict[int, Request] = {} # key : ID, value: Request
         self.vehicles: Dict[int, Vehicle] = self.init_vehicles() # key : ID, value: Vehicle
         self.waiting_times: Dict[int, int] = {} # key : request ID, value : waiting time
@@ -50,12 +51,14 @@ class Simulator():
         self.matched_number = 0             # 매칭된 요청의 수(최종 리턴 값)
         self.log_data = pd.DataFrame(columns=['curr_time', 'request_id', 'waiting_time', 'arrival_time', 'total_time', 'req_loc'])
         self.time_to_ref = 0
+        self.times_for_log: List[int] = []
         self.exp_name = exp_name
 
         self.tolerance = tolerance          # ETA 남은 시간에 따라 availability를 결정할 때 사용할 tolerance
         self.time_window = time_window      # batch interval (단위 : min)
         self.a = a                          # weight for arrival time
         self.b = b                          # weight for waiting time
+        self.c = c                          # weight for hot spot
 
     def init_vehicles(self):
         vehicles = {}
@@ -222,6 +225,7 @@ class Simulator():
             if (self.vehicles[veh_id].ETA  > 0):
                 arrival_time += self.vehicles[veh_id].ETA
             total_time = waiting_time + arrival_time
+            self.times_for_log.append(total_time)
             req_loc = self.requests[req_id].origin_loc
             new_row = pd.DataFrame({
                 'curr_time': [self.vehicles[veh_id].curr_time],
@@ -231,7 +235,7 @@ class Simulator():
                 'total_time': [total_time],
                 'req_loc': [req_loc]
             })
-            self.total_time += total_time
+
             self.log_data = pd.concat([self.log_data, new_row], ignore_index=True)
 
 
@@ -308,6 +312,14 @@ class Simulator():
                 # print(f"Time : {t}, Requests: {len(self.requests)}, Matched : {self.matched_number}, 공차: {cars}, 총 차량: {woring_cars}")
             self.time_to_ref += 1
         
-        name_of_file = f"/a_{self.a}_b_{self.b}_tw_{self.time_window}_tol_{self.tolerance}.csv"
-        self.log_data.to_csv("results/" + self.exp_name + name_of_file, index=False)
-        return self.total_time # It contains each request's waiting time (log)
+        # name_of_file = f"/a_{self.a}_b_{self.b}_tw_{self.time_window}_tol_{self.tolerance}.csv"
+        # self.log_data.to_csv("results/" + self.exp_name + name_of_file, index=False)
+        
+        # from self.times_for_log which is an array filter top 30% long waiting time and average.
+        long_times = sorted(self.times_for_log)
+        top_30 = int(len(long_times) * 0.3)
+        top_30_waiting_times = long_times[len(long_times) - top_30:]
+        equity_measure = sum(top_30_waiting_times) / len(top_30_waiting_times)
+        
+        mean_time = sum(long_times) / len(long_times)
+        return f"{mean_time}, {equity_measure}" # It contains each request's waiting time (log)
