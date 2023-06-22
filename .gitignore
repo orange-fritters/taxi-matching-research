@@ -3,7 +3,7 @@
 *.txt
 /taxi
 .DS_Store
-*.csv
 *.icloud
 __pycache__
 config.json
+*.csv

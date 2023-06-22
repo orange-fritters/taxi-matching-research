@@ -20,17 +20,23 @@ def get_arguments():
 
 
 def main(args):
-    random.seed(0)
-    sim = Simulator(args.data_path,
-                    args.exp_name,
-                    args.total_time, 
-                    args.time_window, 
-                    args.tolerance,
-                    args.a,
-                    args.b,
-                    args.c)
-    result = sim.simulate()
-    print(result)
+    # csv writer.
+    with open('data/plus.csv', 'w') as f:
+        f.write('additional_supply,total_time,equity_measure\n')
+        for i in range(5, 101, 5):
+            random.seed(0)
+            data_path = 'data/supply/plus_' + str(i) + '.csv'
+            sim = Simulator(data_path,
+                            args.exp_name,
+                            args.total_time, 
+                            args.time_window, 
+                            args.tolerance,
+                            args.a,
+                            args.b,
+                            args.c)
+            result = sim.simulate()
+            f.write(str(i) + ',' + str(result) + '\n')
+            print(i, " ", result)
 
 if __name__ == '__main__':
     args = get_arguments()
